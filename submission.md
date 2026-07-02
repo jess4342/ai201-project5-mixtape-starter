@@ -124,11 +124,24 @@ So the honest caveat: through the **current** code path this returns **1**, and 
 
 ---
 
+## Regression Tests
+
+Issues **#2 (feed)** and **#4 (notifications)** had **zero test coverage** — the shipped suite only guarded streaks, search, and playlists. I added a regression test for each in a dedicated `test:` commit, targeting the two bugs that could otherwise silently reappear.
+
+**`tests/test_notifications.py::test_rating_notifies_song_sharer`** — Seeds a sharer and a separate rater, calls `rate_song(rater, song, 5)`, and asserts the sharer has exactly **1** notification of type `song_rated`. *What it verifies:* rating another user's song produces a notification for the original sharer. *Why it would have caught the bug:* against the pre-fix `rate_song()` — which persisted the `Rating` but never called `create_notification()` — the sharer's notification list stays empty, so the assertion `len(notifs) == 1` fails at `0 == 1`. A companion test (`test_rating_own_song_does_not_notify`) pins the self-rating guard so a future "notify everyone" change can't regress it.
+
+**`tests/test_feed.py::test_listening_now_excludes_stale_events`** — Inserts a single listening event **20 hours old** for a friend and asserts `get_friends_listening_now()` returns `[]`. *What it verifies:* the "listening now" feed excludes listens that aren't actually recent. *Why it would have caught the bug:* against the original `RECENT_THRESHOLD = timedelta(hours=24)`, a 20-hour-old event is inside the window, so the friend is returned and the assertion `feed == []` fails. A companion test (`test_listening_now_includes_a_recent_event`, 5 minutes old) ensures the narrowed window didn't over-correct and drop genuinely recent listens.
+
+**Verified both directions.** I temporarily reintroduced each bug (restored `RECENT_THRESHOLD` to 24h; removed the notification call) and confirmed the two tests **fail** (`2 failed, 2 passed`); after restoring the fixes from git, the full suite is **17 passed**. So each test genuinely fails against the buggy code and passes against the fix — the definition of a regression guard.
+
+---
+
 ## Commit History
 
 All five fixes live on the `bugfix/mixtape` branch as separate, single-purpose commits using conventional `fix:` prefixes:
 
 ```
+35b2701 test: add regression tests for feed recency (bug 2) and rating notifications (bug 4)
 5bd1b55 fix: stop dropping the last song in playlist retrieval
 010507c fix: notify song sharer when their song is rated
 0ce84c9 fix: remove pointless tag outerjoin that duplicates search results
@@ -138,9 +151,13 @@ All five fixes live on the `bugfix/mixtape` branch as separate, single-purpose c
 7b64551 initial commit                                                   (pre-existing)
 ```
 
-Each commit touches exactly one service file. After all five, the full suite is green:
+Each commit touches exactly one service file (the two regression tests below are a separate `test:` commit). After all fixes, the full suite is green:
 
 ```
 $ pytest tests/
-13 passed
+17 passed
 ```
+
+## Git Log
+
+![Git log showing commit history](gitlog_screenshot.png)
